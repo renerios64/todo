@@ -1,0 +1,57 @@
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: servicerequests
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-localpassword}
+    volumes:
+      # Named volume — data survives container restarts.
+      # Without this, the DB is wiped every time the container stops.
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Expose 5432 to the host so you can connect with a local DB client.
+      # Inside the Compose network, the API connects to db:5432 directly.
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appuser -d servicerequests"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── .NET API ────────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: ./src/api
+      dockerfile: Dockerfile
+    environment:
+      # ASP.NET Core reads ConnectionStrings__DefaultConnection from env.
+      # Double underscore (__) is the separator for nested config keys.
+      ConnectionStrings__DefaultConnection: >-
+        Host=db;Port=5432;Database=servicerequests;Username=appuser;Password=${DB_PASSWORD:-localpassword}
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_HTTP_PORTS: "8080"
+    ports:
+      - "5100:8080"
+    depends_on:
+      db:
+        # Don't start the API until Postgres passes its healthcheck.
+        # Without this, the API might crash on startup trying to connect
+        # before Postgres is ready to accept connections.
+        condition: service_healthy
+
+  # ── React UI ────────────────────────────────────────────────────────────────
+  web:
+    build:
+      context: ./src/web
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+
+volumes:
+  # Docker manages this volume. Data lives at a Docker-controlled path on the host.
+  postgres_data:

@@ -1,0 +1,18 @@
+# Secrets
+.env
+.env.local
+
+# .NET
+bin/
+obj/
+*.user
+
+# Node
+node_modules/
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.suo
+*.swp
