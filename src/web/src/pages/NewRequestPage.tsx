@@ -53,11 +53,12 @@ export function NewRequestPage() {
       <h1 style={{ marginTop: 12 }}>New Service Request</h1>
 
       <form onSubmit={handleSubmit}>
-        <label>Title</label>
-        <input name="title" value={form.title} onChange={handleChange} required style={fieldStyle} />
+        <label htmlFor="title">Title</label>
+        <input id="title" name="title" value={form.title} onChange={handleChange} required style={fieldStyle} />
 
-        <label>Description</label>
+        <label htmlFor="description">Description</label>
         <textarea
+          id="description"
           name="description"
           value={form.description}
           onChange={handleChange}
@@ -66,8 +67,9 @@ export function NewRequestPage() {
           style={fieldStyle}
         />
 
-        <label>Requestor Email</label>
+        <label htmlFor="requestorEmail">Requestor Email</label>
         <input
+          id="requestorEmail"
           name="requestorEmail"
           type="email"
           value={form.requestorEmail}
@@ -76,8 +78,8 @@ export function NewRequestPage() {
           style={fieldStyle}
         />
 
-        <label>Priority</label>
-        <select name="priority" value={form.priority} onChange={handleChange} style={fieldStyle}>
+        <label htmlFor="priority">Priority</label>
+        <select id="priority" name="priority" value={form.priority} onChange={handleChange} style={fieldStyle}>
           {PRIORITIES.map((p) => (
             <option key={p} value={p}>{p}</option>
           ))}

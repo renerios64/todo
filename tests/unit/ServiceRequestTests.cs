@@ -25,7 +25,7 @@ public class ServiceRequestsTests(ApiFactory factory) : IClassFixture<ApiFactory
 
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web)
     {
-        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower) }
     };
 
     private static CreateServiceRequestDto SampleDto(string title = "Test Request") => new(

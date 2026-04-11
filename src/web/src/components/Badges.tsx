@@ -17,12 +17,14 @@ const statusColors: Record<Status, string> = {
 interface BadgeProps {
   value: string;
   colorMap: Record<string, string>;
+  'data-testid'?: string;
 }
 
-function Badge({ value, colorMap }: BadgeProps) {
+function Badge({ value, colorMap, 'data-testid': testId }: BadgeProps) {
   const color = colorMap[value] ?? '#adb5bd';
   return (
     <span
+      data-testid={testId}
       style={{
         backgroundColor: color,
         color: '#fff',
@@ -43,5 +45,5 @@ export function PriorityBadge({ priority }: { priority: Priority }) {
 }
 
 export function StatusBadge({ status }: { status: Status }) {
-  return <Badge value={status} colorMap={statusColors} />;
+  return <Badge value={status} colorMap={statusColors} data-testid="status-badge" />;
 }
