@@ -13,15 +13,13 @@ COPY . .
 RUN npm run build
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
-# nginx is a tiny, battle-hardened static file server (~40MB vs ~200MB for node)
 FROM nginx:alpine AS runtime
 
-# Copy the compiled static files into nginx's default serving directory
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# Copy our custom nginx config (handles SPA client-side routing)
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Hardcoded nginx config for Azure — no runtime substitution needed.
+# The API's internal FQDN is stable as long as the Container Apps environment exists.
+COPY nginx.azure.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
-
 CMD ["nginx", "-g", "daemon off;"]

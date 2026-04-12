@@ -108,6 +108,7 @@ resource "azurerm_postgresql_flexible_server" "main" {
   # Burstable B1ms: 1 vCPU, 2 GB RAM — cheapest option, fine for dev
   sku_name = "B_Standard_B1ms"
   version  = "16"
+  zone     = "3"  # Pin to the zone Azure auto-assigned at creation
 
   # Private access via delegated subnet — no public IP assigned
   delegated_subnet_id           = azurerm_subnet.postgres.id
@@ -135,3 +136,166 @@ resource "azurerm_postgresql_flexible_server_database" "app" {
 output "db_host" {
   value = azurerm_postgresql_flexible_server.main.fqdn
 }
+
+# ── Container Apps Environment ────────────────────────────────────────────────
+
+# Log Analytics is required by Container Apps Environment for log ingestion.
+resource "azurerm_log_analytics_workspace" "main" {
+  name                = "log-${local.name_prefix}"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  sku                 = "PerGB2018"  # Pay-per-GB — cheapest option
+  retention_in_days   = 30
+}
+
+resource "azurerm_container_app_environment" "main" {
+  name                       = "cae-${local.name_prefix}"
+  location                   = azurerm_resource_group.main.location
+  resource_group_name        = azurerm_resource_group.main.name
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+
+  # VNet integration — place the environment inside our ACA subnet.
+  # This allows container apps to reach Postgres via private IP.
+  infrastructure_subnet_id = azurerm_subnet.container_apps.id
+
+  # Azure auto-assigns these fields at creation time — ignore drift.
+  lifecycle {
+    ignore_changes = [
+      infrastructure_resource_group_name,
+      workload_profile,
+    ]
+  }
+}
+
+output "aca_environment_id" {
+  value = azurerm_container_app_environment.main.id
+}
+
+# ── API Container App ─────────────────────────────────────────────────────────
+
+locals {
+  db_connection_string = "Host=${azurerm_postgresql_flexible_server.main.fqdn};Database=todoapp;Username=todoadmin;Password=${var.db_admin_password};SSL Mode=Require"
+}
+
+resource "azurerm_container_app" "api" {
+  name                         = "ca-api-${local.name_prefix}"
+  container_app_environment_id = azurerm_container_app_environment.main.id
+  resource_group_name          = azurerm_resource_group.main.name
+  revision_mode                = "Single"
+
+  # ACR credentials so the environment can pull our image
+  registry {
+    server               = azurerm_container_registry.main.login_server
+    username             = azurerm_container_registry.main.admin_username
+    password_secret_name = "acr-password"
+  }
+
+  secret {
+    name  = "acr-password"
+    value = azurerm_container_registry.main.admin_password
+  }
+
+  secret {
+    name  = "db-connection-string"
+    value = local.db_connection_string
+  }
+
+  template {
+    min_replicas = 1
+    max_replicas = 1
+
+    container {
+      name   = "api"
+      image  = "${azurerm_container_registry.main.login_server}/todo-api:latest"
+      cpu    = 0.5
+      memory = "1Gi"
+
+      env {
+        name        = "ConnectionStrings__DefaultConnection"
+        secret_name = "db-connection-string"
+      }
+
+      env {
+        name  = "ASPNETCORE_ENVIRONMENT"
+        value = "Production"
+      }
+    }
+  }
+
+  # Internal ingress — API is only reachable from within the Container Apps environment
+  ingress {
+    external_enabled           = false
+    allow_insecure_connections = true
+    target_port                = 8080
+    transport                  = "http"
+
+    traffic_weight {
+      latest_revision = true
+      percentage      = 100
+    }
+  }
+}
+
+output "api_internal_fqdn" {
+  value = azurerm_container_app.api.ingress[0].fqdn
+}
+
+# ── Web Container App ─────────────────────────────────────────────────────────
+resource "azurerm_container_app" "web" {
+  name                         = "ca-web-${local.name_prefix}"
+  container_app_environment_id = azurerm_container_app_environment.main.id
+  resource_group_name          = azurerm_resource_group.main.name
+  revision_mode                = "Single"
+
+  registry {
+    server               = azurerm_container_registry.main.login_server
+    username             = azurerm_container_registry.main.admin_username
+    password_secret_name = "acr-password"
+  }
+
+  secret {
+    name  = "acr-password"
+    value = azurerm_container_registry.main.admin_password
+  }
+
+  template {
+    min_replicas = 1
+    max_replicas = 1
+
+    container {
+      name   = "web"
+      image  = "${azurerm_container_registry.main.login_server}/todo-web:latest"
+      cpu    = 0.25
+      memory = "0.5Gi"
+
+      # nginx uses this at startup to know where to proxy /api/ requests.
+      # Points to the API's internal-only FQDN inside the Container Apps environment.
+      env {
+        name  = "API_URL"
+        value = "http://${azurerm_container_app.api.ingress[0].fqdn}"
+      }
+
+      env {
+        name  = "NGINX_ENVSUBST_FILTER"
+        value = "API_URL"
+      }
+    }
+  }
+
+  # External ingress — publicly reachable from the internet on port 80/443
+  ingress {
+    external_enabled = true
+    target_port      = 80
+    transport        = "http"
+
+    traffic_weight {
+      latest_revision = true
+      percentage      = 100
+    }
+  }
+}
+
+output "web_url" {
+  value = "https://${azurerm_container_app.web.ingress[0].fqdn}"
+}
+

@@ -47,6 +47,11 @@ services:
     build:
       context: ./src/web
       dockerfile: Dockerfile
+    environment:
+      API_URL: "http://api:8080"
+      # Limits nginx's envsubst to only ${API_URL} — prevents it from clobbering
+      # nginx variables like $host, $uri, $remote_addr in the template.
+      NGINX_ENVSUBST_FILTER: "API_URL"
     ports:
       - "3000:80"
     depends_on:
