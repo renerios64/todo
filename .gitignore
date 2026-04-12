@@ -11,6 +11,12 @@ obj/
 node_modules/
 dist/
 
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+crash.log
+
 # IDE
 .idea/
 .vscode/
