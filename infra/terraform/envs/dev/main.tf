@@ -418,3 +418,156 @@ output "web_url" {
   value = "https://${azurerm_container_app.web.ingress[0].fqdn}"
 }
 
+# ── Monitoring ────────────────────────────────────────────────────────────────
+
+# Action group — defines WHERE alerts are sent when they fire.
+# An action group can have multiple receivers (email, SMS, webhook, etc.).
+# We start with a single email; more can be added later.
+resource "azurerm_monitor_action_group" "main" {
+  name                = "ag-${local.name_prefix}"
+  resource_group_name = azurerm_resource_group.main.name
+  short_name          = "todo-dev"  # Max 12 chars, shown in SMS/email subjects
+
+  email_receiver {
+    name          = "admin"
+    email_address = "reneriosleon@gmail.com"
+  }
+}
+
+# Diagnostic settings — tells Azure to send resource logs and metrics to Log
+# Analytics. Without this, logs only exist inside the resource itself (not queryable).
+# We wire up all three app resources to the same Log Analytics workspace.
+
+resource "azurerm_monitor_diagnostic_setting" "cae" {
+  name                       = "diag-cae-${local.name_prefix}"
+  target_resource_id         = azurerm_container_app_environment.main.id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+
+  # Log categories are set at the Container Apps Environment level, not per app.
+  # ContainerAppConsoleLogs: stdout/stderr from all apps in this environment
+  # ContainerAppSystemLogs: Azure platform events (restarts, scaling, image pulls)
+  enabled_log {
+    category = "ContainerAppConsoleLogs"
+  }
+
+  enabled_log {
+    category = "ContainerAppSystemLogs"
+  }
+}
+
+resource "azurerm_monitor_diagnostic_setting" "postgres" {
+  name                       = "diag-psql-${local.name_prefix}"
+  target_resource_id         = azurerm_postgresql_flexible_server.main.id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+
+  # PostgreSQL server logs — slow queries, connections, errors
+  enabled_log {
+    category = "PostgreSQLLogs"
+  }
+}
+
+# ── Metric Alerts ─────────────────────────────────────────────────────────────
+# Metric alerts evaluate a numeric signal on a rolling time window.
+# When the condition is met, the action group fires (sends email).
+
+# Alert: too many 5xx errors on the API in the last 5 minutes.
+# Requests2xx/4xx are normal; 5xx means the app is broken.
+resource "azurerm_monitor_metric_alert" "api_5xx" {
+  name                = "alert-api-5xx-${local.name_prefix}"
+  resource_group_name = azurerm_resource_group.main.name
+  scopes              = [azurerm_container_app.api.id]
+  description         = "API is returning 5xx errors"
+  severity            = 1  # 0=Critical, 1=Error, 2=Warning, 3=Info, 4=Verbose
+  frequency           = "PT5M"   # Evaluate every 5 minutes
+  window_size         = "PT5M"   # Look back 5 minutes
+
+  criteria {
+    metric_namespace = "Microsoft.App/containerApps"
+    metric_name      = "Requests"
+    aggregation      = "Total"
+    operator         = "GreaterThan"
+    threshold        = 5
+
+    dimension {
+      name     = "statusCodeCategory"
+      operator = "Include"
+      values   = ["5xx"]
+    }
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.main.id
+  }
+}
+
+# Alert: API CPU above 80% — container may be struggling under load
+resource "azurerm_monitor_metric_alert" "api_cpu" {
+  name                = "alert-api-cpu-${local.name_prefix}"
+  resource_group_name = azurerm_resource_group.main.name
+  scopes              = [azurerm_container_app.api.id]
+  description         = "API CPU usage is above 80%"
+  severity            = 2
+  frequency           = "PT5M"
+  window_size         = "PT15M"  # Sustained over 15 min, not just a spike
+
+  criteria {
+    metric_namespace = "Microsoft.App/containerApps"
+    metric_name      = "UsageNanoCores"
+    aggregation      = "Average"
+    operator         = "GreaterThan"
+    # 0.5 vCPU = 500,000,000 nanocores. 80% of that = 400,000,000
+    threshold        = 400000000
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.main.id
+  }
+}
+
+# Alert: API memory above 80% — risk of OOM kill
+resource "azurerm_monitor_metric_alert" "api_memory" {
+  name                = "alert-api-memory-${local.name_prefix}"
+  resource_group_name = azurerm_resource_group.main.name
+  scopes              = [azurerm_container_app.api.id]
+  description         = "API memory usage is above 80%"
+  severity            = 2
+  frequency           = "PT5M"
+  window_size         = "PT15M"
+
+  criteria {
+    metric_namespace = "Microsoft.App/containerApps"
+    metric_name      = "WorkingSetBytes"
+    aggregation      = "Average"
+    operator         = "GreaterThan"
+    # 1Gi = 1,073,741,824 bytes. 80% = 858,993,459
+    threshold        = 858993459
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.main.id
+  }
+}
+
+# Alert: Postgres storage above 80% — database disk may fill up
+resource "azurerm_monitor_metric_alert" "postgres_storage" {
+  name                = "alert-psql-storage-${local.name_prefix}"
+  resource_group_name = azurerm_resource_group.main.name
+  scopes              = [azurerm_postgresql_flexible_server.main.id]
+  description         = "PostgreSQL storage usage is above 80%"
+  severity            = 2
+  frequency           = "PT15M"
+  window_size         = "PT1H"
+
+  criteria {
+    metric_namespace = "Microsoft.DBforPostgreSQL/flexibleServers"
+    metric_name      = "storage_percent"
+    aggregation      = "Average"
+    operator         = "GreaterThan"
+    threshold        = 80
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.main.id
+  }
+}
+
