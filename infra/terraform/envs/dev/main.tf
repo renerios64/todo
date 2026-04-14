@@ -11,6 +11,13 @@ resource "azurerm_resource_group" "main" {
   location = var.location
 }
 
+# Separate resource group for Key Vault — intentionally isolated so that
+# destroying the main resource group never deletes secrets.
+resource "azurerm_resource_group" "secrets" {
+  name     = "rg-secrets-${local.name_prefix}-${var.location}"
+  location = var.location
+}
+
 # ── Networking ────────────────────────────────────────────────────────────────
 
 resource "azurerm_virtual_network" "main" {
@@ -116,7 +123,7 @@ resource "azurerm_postgresql_flexible_server" "main" {
   public_network_access_enabled = false
 
   administrator_login    = "todoadmin"
-  administrator_password = var.db_admin_password
+  administrator_password = data.azurerm_key_vault_secret.db_password.value
 
   storage_mb            = 32768  # 32 GB minimum
   backup_retention_days = 7
@@ -137,7 +144,101 @@ output "db_host" {
   value = azurerm_postgresql_flexible_server.main.fqdn
 }
 
-# ── Container Apps Environment ────────────────────────────────────────────────
+# ── Key Vault ─────────────────────────────────────────────────────────────────
+
+# User-Assigned Managed Identity — a reusable Azure identity attached to our
+# container apps so they can authenticate to Key Vault without any credentials.
+# "User-assigned" means it exists independently of any single resource and can
+# be shared across multiple container apps.
+resource "azurerm_user_assigned_identity" "main" {
+  name                = "mi-${local.name_prefix}"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+}
+
+locals {
+  # Key Vault name: max 24 chars, alphanumeric + hyphens, globally unique.
+  # We reuse the same 6-char subscription prefix pattern as ACR.
+  kv_name = "kv-${local.name_prefix}-${substr(var.subscription_id, 0, 6)}"
+}
+
+resource "azurerm_key_vault" "main" {
+  name                = local.kv_name
+  resource_group_name = azurerm_resource_group.secrets.name
+  location            = azurerm_resource_group.secrets.location
+  tenant_id           = data.azurerm_client_config.current.tenant_id
+  sku_name            = "standard"
+
+  # Use Azure RBAC for access control instead of legacy access policies.
+  # RBAC is the modern approach — permissions are managed as role assignments,
+  # consistent with how all other Azure resources work.
+  rbac_authorization_enabled = true
+
+  # In dev, disable purge protection so we can destroy the vault immediately.
+  # In prod, enable this to prevent accidental permanent deletion.
+  purge_protection_enabled = false
+
+  # Soft delete is always enabled in Azure (can't be disabled), but we set
+  # retention to 7 days (minimum) so dev cleanup isn't blocked for 90 days.
+  soft_delete_retention_days = 7
+}
+
+# Pull the current Terraform runner's client config (tenant ID, object ID).
+# Used to grant the deployer access to write secrets into the vault.
+data "azurerm_client_config" "current" {}
+
+# Grant the deployer (you, running Terraform) permission to read/write secrets.
+# Without this, Terraform can create the vault but can't write secrets into it.
+resource "azurerm_role_assignment" "kv_deployer_secrets_officer" {
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Secrets Officer"
+  principal_id         = var.deployer_object_id
+}
+
+# Grant the managed identity permission to READ secrets.
+# Container apps use this identity at runtime to fetch secrets from Key Vault.
+resource "azurerm_role_assignment" "kv_mi_secrets_user" {
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.main.principal_id
+}
+
+# Store the full DB connection string in Key Vault.
+# The local assembles it from the Postgres FQDN + the password read from Key Vault.
+# Nothing sensitive lives in Terraform state or tfvars.
+resource "azurerm_key_vault_secret" "db_connection_string" {
+  name         = "db-connection-string"
+  value        = local.db_connection_string
+  key_vault_id = azurerm_key_vault.main.id
+
+  depends_on = [azurerm_role_assignment.kv_deployer_secrets_officer]
+}
+
+# Store the ACR admin password in Key Vault.
+resource "azurerm_key_vault_secret" "acr_password" {
+  name         = "acr-admin-password"
+  value        = azurerm_container_registry.main.admin_password
+  key_vault_id = azurerm_key_vault.main.id
+
+  depends_on = [azurerm_role_assignment.kv_deployer_secrets_officer]
+}
+
+output "key_vault_uri" {
+  value = azurerm_key_vault.main.vault_uri
+}
+
+# Read the DB password back from Key Vault so it never needs to be passed
+# on the command line or stored in tfvars. This data source runs at plan/apply
+# time and fetches the current secret value directly from Key Vault.
+data "azurerm_key_vault_secret" "db_password" {
+  name         = "db-admin-password"
+  key_vault_id = azurerm_key_vault.main.id
+
+  # The Secrets Officer role assignment must exist before we can read secrets.
+  depends_on = [azurerm_role_assignment.kv_deployer_secrets_officer]
+}
+
+
 
 # Log Analytics is required by Container Apps Environment for log ingestion.
 resource "azurerm_log_analytics_workspace" "main" {
@@ -174,7 +275,7 @@ output "aca_environment_id" {
 # ── API Container App ─────────────────────────────────────────────────────────
 
 locals {
-  db_connection_string = "Host=${azurerm_postgresql_flexible_server.main.fqdn};Database=todoapp;Username=todoadmin;Password=${var.db_admin_password};SSL Mode=Require"
+  db_connection_string = "Host=${azurerm_postgresql_flexible_server.main.fqdn};Database=todoapp;Username=todoadmin;Password=${data.azurerm_key_vault_secret.db_password.value};SSL Mode=Require"
 }
 
 resource "azurerm_container_app" "api" {
@@ -183,6 +284,13 @@ resource "azurerm_container_app" "api" {
   resource_group_name          = azurerm_resource_group.main.name
   revision_mode                = "Single"
 
+  # Attach the managed identity so this app can authenticate to Key Vault
+  # at runtime without any embedded credentials.
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.main.id]
+  }
+
   # ACR credentials so the environment can pull our image
   registry {
     server               = azurerm_container_registry.main.login_server
@@ -190,14 +298,19 @@ resource "azurerm_container_app" "api" {
     password_secret_name = "acr-password"
   }
 
+  # Secrets now reference Key Vault by versioned URL.
+  # Azure Container Apps fetches the value directly from Key Vault at deploy time
+  # — the plaintext never appears in Terraform state.
   secret {
-    name  = "acr-password"
-    value = azurerm_container_registry.main.admin_password
+    name                = "acr-password"
+    key_vault_secret_id = azurerm_key_vault_secret.acr_password.versionless_id
+    identity            = azurerm_user_assigned_identity.main.id
   }
 
   secret {
-    name  = "db-connection-string"
-    value = local.db_connection_string
+    name                = "db-connection-string"
+    key_vault_secret_id = azurerm_key_vault_secret.db_connection_string.versionless_id
+    identity            = azurerm_user_assigned_identity.main.id
   }
 
   template {
@@ -247,6 +360,11 @@ resource "azurerm_container_app" "web" {
   resource_group_name          = azurerm_resource_group.main.name
   revision_mode                = "Single"
 
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.main.id]
+  }
+
   registry {
     server               = azurerm_container_registry.main.login_server
     username             = azurerm_container_registry.main.admin_username
@@ -254,8 +372,9 @@ resource "azurerm_container_app" "web" {
   }
 
   secret {
-    name  = "acr-password"
-    value = azurerm_container_registry.main.admin_password
+    name                = "acr-password"
+    key_vault_secret_id = azurerm_key_vault_secret.acr_password.versionless_id
+    identity            = azurerm_user_assigned_identity.main.id
   }
 
   template {
@@ -264,7 +383,7 @@ resource "azurerm_container_app" "web" {
 
     container {
       name   = "web"
-      image  = "${azurerm_container_registry.main.login_server}/todo-web:latest"
+      image  = "${azurerm_container_registry.main.login_server}/todo-web:v6"
       cpu    = 0.25
       memory = "0.5Gi"
 

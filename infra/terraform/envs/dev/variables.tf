@@ -21,8 +21,7 @@ variable "project" {
   default     = "todo"
 }
 
-variable "db_admin_password" {
-  description = "PostgreSQL administrator password. Set via TF_VAR_db_admin_password env var — never hardcode."
+variable "deployer_object_id" {
+  description = "Azure AD object ID of the user or service principal running Terraform. Granted Key Vault Secrets Officer so Terraform can write secrets."
   type        = string
-  sensitive   = true
 }

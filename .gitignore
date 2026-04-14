@@ -1,6 +1,10 @@
 # Secrets
 .env
 .env.local
+*.pem
+*.key
+*.p12
+*.pfx
 
 # .NET
 bin/
@@ -14,11 +18,18 @@ dist/
 # Terraform
 .terraform/
 *.tfstate
-*.tfstate.backup
+*.tfstate.*
+*.tfvars.backup
 crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
 
 # IDE
 .idea/
 .vscode/
 *.suo
 *.swp
+.DS_Store
