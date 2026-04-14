@@ -61,3 +61,9 @@ variable "postgres_storage_threshold" {
   type        = number
   default     = 80
 }
+
+variable "tags" {
+  description = "Tags to apply to all resources"
+  type        = map(string)
+  default     = {}
+}

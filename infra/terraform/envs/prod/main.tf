@@ -2,6 +2,9 @@
 # Same modules as dev/test — larger sizing, tighter security, stricter alerts.
 
 locals {
+  tags = {
+    Environment = upper(var.environment)
+  }
   name_prefix = "${var.project}-${var.environment}"
 }
 
@@ -10,11 +13,13 @@ locals {
 resource "azurerm_resource_group" "main" {
   name     = "rg-${local.name_prefix}-${var.location}"
   location = var.location
+  tags     = local.tags
 }
 
 resource "azurerm_resource_group" "secrets" {
   name     = "rg-secrets-${local.name_prefix}-${var.location}"
   location = var.location
+  tags     = local.tags
 }
 
 # ── Data Sources ──────────────────────────────────────────────────────────────
@@ -28,6 +33,7 @@ module "networking" {
   name_prefix         = local.name_prefix
   location            = azurerm_resource_group.main.location
   resource_group_name = azurerm_resource_group.main.name
+  tags                = local.tags
 }
 
 module "registry" {
@@ -38,7 +44,8 @@ module "registry" {
   subscription_id     = var.subscription_id
 
   # Standard unlocks geo-replication and content trust
-  sku = "Standard"
+  sku  = "Standard"
+  tags = local.tags
 }
 
 module "keyvault" {
@@ -55,6 +62,7 @@ module "keyvault" {
   # accidentally. 90-day retention matches Azure's default.
   purge_protection_enabled   = true
   soft_delete_retention_days = 90
+  tags                       = local.tags
 }
 
 data "azurerm_key_vault_secret" "db_password" {
@@ -76,6 +84,7 @@ module "database" {
   sku_name              = "GP_Standard_D2s_v3"  # 2 vCPU, 8 GB RAM
   storage_mb            = 131072                 # 128 GB
   backup_retention_days = 30
+  tags                  = local.tags
 }
 
 # ── Key Vault Secrets (glue) ──────────────────────────────────────────────────
@@ -128,6 +137,7 @@ module "container_apps" {
 
   # Keep prod logs longer
   log_analytics_retention_days = 90
+  tags                         = local.tags
 }
 
 # ── Monitoring ────────────────────────────────────────────────────────────────
@@ -150,6 +160,7 @@ module "monitoring" {
   api_cpu_threshold          = 700000000        # 70% of 1.0 vCPU
   api_memory_threshold       = 1503238554       # 70% of 2Gi
   postgres_storage_threshold = 75               # tighter storage warning
+  tags                       = local.tags
 }
 
 # ── Outputs ───────────────────────────────────────────────────────────────────

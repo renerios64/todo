@@ -16,6 +16,7 @@ resource "azurerm_postgresql_flexible_server" "main" {
 
   storage_mb            = var.storage_mb
   backup_retention_days = var.backup_retention_days
+  tags                  = var.tags
 }
 
 resource "azurerm_postgresql_flexible_server_database" "app" {

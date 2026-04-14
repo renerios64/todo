@@ -9,6 +9,7 @@ resource "azurerm_user_assigned_identity" "main" {
   name                = "mi-${var.name_prefix}"
   resource_group_name = var.identity_resource_group_name
   location            = var.location
+  tags                = var.tags
 }
 
 resource "azurerm_key_vault" "main" {
@@ -21,6 +22,7 @@ resource "azurerm_key_vault" "main" {
   rbac_authorization_enabled = true
   purge_protection_enabled   = var.purge_protection_enabled
   soft_delete_retention_days = var.soft_delete_retention_days
+  tags                       = var.tags
 }
 
 # Grant the deployer (Terraform runner) permission to read/write secrets.

@@ -3,6 +3,9 @@
 
 locals {
   name_prefix = "${var.project}-${var.environment}"
+  tags = {
+    Environment = upper(var.environment)
+  }
 }
 
 # ── Resource Groups ───────────────────────────────────────────────────────────
@@ -10,11 +13,13 @@ locals {
 resource "azurerm_resource_group" "main" {
   name     = "rg-${local.name_prefix}-${var.location}"
   location = var.location
+  tags     = local.tags
 }
 
 resource "azurerm_resource_group" "secrets" {
   name     = "rg-secrets-${local.name_prefix}-${var.location}"
   location = var.location
+  tags     = local.tags
 }
 
 # ── Data Sources ──────────────────────────────────────────────────────────────
@@ -28,6 +33,7 @@ module "networking" {
   name_prefix         = local.name_prefix
   location            = azurerm_resource_group.main.location
   resource_group_name = azurerm_resource_group.main.name
+  tags                = local.tags
 }
 
 module "registry" {
@@ -37,6 +43,7 @@ module "registry" {
   resource_group_name = azurerm_resource_group.main.name
   subscription_id     = var.subscription_id
   sku                 = "Basic"
+  tags                = local.tags
 }
 
 module "keyvault" {
@@ -52,6 +59,7 @@ module "keyvault" {
   # Same as dev — purge protection off for easy cleanup
   purge_protection_enabled   = false
   soft_delete_retention_days = 7
+  tags                       = local.tags
 }
 
 data "azurerm_key_vault_secret" "db_password" {
@@ -73,6 +81,7 @@ module "database" {
   sku_name              = "B_Standard_B1ms"
   storage_mb            = 32768
   backup_retention_days = 7
+  tags                  = local.tags
 }
 
 # ── Key Vault Secrets (glue) ──────────────────────────────────────────────────
@@ -121,6 +130,7 @@ module "container_apps" {
   # Keep at least 1 replica — test should always be reachable
   min_replicas = 1
   max_replicas = 2
+  tags         = local.tags
 }
 
 # ── Monitoring ────────────────────────────────────────────────────────────────
@@ -143,6 +153,7 @@ module "monitoring" {
   api_cpu_threshold          = 400000000  # 80% of 0.5 vCPU
   api_memory_threshold       = 858993459  # 80% of 1Gi
   postgres_storage_threshold = 80
+  tags                       = local.tags
 }
 
 # ── Outputs ───────────────────────────────────────────────────────────────────

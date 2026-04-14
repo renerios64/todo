@@ -9,4 +9,5 @@ resource "azurerm_container_registry" "main" {
   location            = var.location
   sku                 = var.sku
   admin_enabled       = true
+  tags                = var.tags
 }

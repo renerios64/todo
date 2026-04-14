@@ -2,6 +2,7 @@ resource "azurerm_monitor_action_group" "main" {
   name                = "ag-${var.name_prefix}"
   resource_group_name = var.resource_group_name
   short_name          = var.alert_short_name
+  tags                = var.tags
 
   email_receiver {
     name          = "admin"
@@ -42,6 +43,7 @@ resource "azurerm_monitor_metric_alert" "api_5xx" {
   severity            = 1
   frequency           = "PT5M"
   window_size         = "PT5M"
+  tags                = var.tags
 
   criteria {
     metric_namespace = "Microsoft.App/containerApps"
@@ -70,6 +72,7 @@ resource "azurerm_monitor_metric_alert" "api_cpu" {
   severity            = 2
   frequency           = "PT5M"
   window_size         = "PT15M"
+  tags                = var.tags
 
   criteria {
     metric_namespace = "Microsoft.App/containerApps"
@@ -92,6 +95,7 @@ resource "azurerm_monitor_metric_alert" "api_memory" {
   severity            = 2
   frequency           = "PT5M"
   window_size         = "PT15M"
+  tags                = var.tags
 
   criteria {
     metric_namespace = "Microsoft.App/containerApps"
@@ -114,6 +118,7 @@ resource "azurerm_monitor_metric_alert" "postgres_storage" {
   severity            = 2
   frequency           = "PT15M"
   window_size         = "PT1H"
+  tags                = var.tags
 
   criteria {
     metric_namespace = "Microsoft.DBforPostgreSQL/flexibleServers"

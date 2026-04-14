@@ -1,6 +1,6 @@
 # ── Stage 1: Build ──────────────────────────────────────────────────────────
 # Use the full .NET SDK image — we need the compiler here
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM --platform=linux/amd64 mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Copy the project file first and restore dependencies.
@@ -16,7 +16,7 @@ RUN dotnet publish -c Release -o /app/publish
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
 # Switch to a much smaller image — just the ASP.NET runtime, no SDK
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+FROM --platform=linux/amd64 mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
 # Copy only the published output from the build stage.

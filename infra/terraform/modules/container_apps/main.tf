@@ -4,6 +4,7 @@ resource "azurerm_log_analytics_workspace" "main" {
   resource_group_name = var.resource_group_name
   sku                 = "PerGB2018"
   retention_in_days   = var.log_analytics_retention_days
+  tags                = var.tags
 }
 
 resource "azurerm_container_app_environment" "main" {
@@ -12,6 +13,7 @@ resource "azurerm_container_app_environment" "main" {
   resource_group_name        = var.resource_group_name
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
   infrastructure_subnet_id   = var.container_apps_subnet_id
+  tags                       = var.tags
 
   lifecycle {
     ignore_changes = [
@@ -26,6 +28,7 @@ resource "azurerm_container_app" "api" {
   container_app_environment_id = azurerm_container_app_environment.main.id
   resource_group_name          = var.resource_group_name
   revision_mode                = "Single"
+  tags                         = var.tags
 
   identity {
     type         = "UserAssigned"
@@ -90,6 +93,7 @@ resource "azurerm_container_app" "web" {
   container_app_environment_id = azurerm_container_app_environment.main.id
   resource_group_name          = var.resource_group_name
   revision_mode                = "Single"
+  tags                         = var.tags
 
   identity {
     type         = "UserAssigned"

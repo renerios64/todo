@@ -44,3 +44,9 @@ variable "soft_delete_retention_days" {
   type        = number
   default     = 7
 }
+
+variable "tags" {
+  description = "Tags to apply to all resources"
+  type        = map(string)
+  default     = {}
+}

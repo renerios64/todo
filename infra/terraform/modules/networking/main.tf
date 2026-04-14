@@ -3,6 +3,7 @@ resource "azurerm_virtual_network" "main" {
   location            = var.location
   resource_group_name = var.resource_group_name
   address_space       = ["10.0.0.0/16"]
+  tags                = var.tags
 }
 
 # Container Apps Environment requires a dedicated subnet of at least /23 (512 IPs).
@@ -44,6 +45,7 @@ resource "azurerm_subnet" "postgres" {
 resource "azurerm_private_dns_zone" "postgres" {
   name                = "privatelink.postgres.database.azure.com"
   resource_group_name = var.resource_group_name
+  tags                = var.tags
 }
 
 # Link the DNS zone to the VNet so resources inside can resolve it.

@@ -1,6 +1,6 @@
 # ── Stage 1: Build ──────────────────────────────────────────────────────────
 # Node is only needed to compile the React app into static files
-FROM node:24-alpine AS build
+FROM --platform=linux/amd64 node:24-alpine AS build
 WORKDIR /app
 
 # Same cache trick — copy package files first, install deps, then copy source.
@@ -13,7 +13,7 @@ COPY . .
 RUN npm run build
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
-FROM nginx:alpine AS runtime
+FROM --platform=linux/amd64 nginx:alpine AS runtime
 
 COPY --from=build /app/dist /usr/share/nginx/html
 
