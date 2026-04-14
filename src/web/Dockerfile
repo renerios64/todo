@@ -17,9 +17,9 @@ FROM nginx:alpine AS runtime
 
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# Hardcoded nginx config for Azure — no runtime substitution needed.
-# The API's internal FQDN is stable as long as the Container Apps environment exists.
-COPY nginx.azure.conf /etc/nginx/conf.d/default.conf
+# Copy as a template — nginx alpine automatically runs envsubst on files in
+# /etc/nginx/templates/ at startup, replacing ${API_URL} with the env var value.
+COPY nginx.azure.conf /etc/nginx/templates/default.conf.template
 
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
