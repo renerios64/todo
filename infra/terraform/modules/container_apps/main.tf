@@ -145,3 +145,36 @@ resource "azurerm_container_app" "web" {
     }
   }
 }
+
+# ── Custom Domain + Managed TLS Certificate ───────────────────────────────────
+# The azurerm_container_app_environment_managed_certificate resource has a known
+# schema bug in the azurerm provider. We use a null_resource + local-exec to
+# call `az containerapp hostname bind` instead, which issues a free managed TLS
+# cert and binds the custom domain in one step.
+#
+# This triggers whenever the web app FQDN changes (e.g., after destroy+apply),
+# keeping DNS, cert, and domain binding all in sync automatically.
+
+resource "null_resource" "custom_domain_bind" {
+  count = var.custom_domain != "" ? 1 : 0
+
+  triggers = {
+    # Re-run when FQDN changes (destroy + apply gives new FQDN)
+    web_fqdn      = azurerm_container_app.web.ingress[0].fqdn
+    custom_domain = var.custom_domain
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      set -e
+      echo "Binding custom domain ${var.custom_domain} to ${azurerm_container_app.web.name}..."
+      az containerapp hostname bind \
+        --resource-group ${azurerm_container_app.web.resource_group_name} \
+        --name ${azurerm_container_app.web.name} \
+        --environment ${azurerm_container_app_environment.main.name} \
+        --hostname ${var.custom_domain} \
+        --validation-method CNAME
+      echo "Custom domain bound and managed TLS cert issued."
+    EOT
+  }
+}

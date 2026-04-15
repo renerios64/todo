@@ -17,3 +17,12 @@ output "api_id" {
 output "web_url" {
   value = "https://${azurerm_container_app.web.ingress[0].fqdn}"
 }
+
+# Raw FQDN used by each env to build the CNAME record pointing to this app.
+output "web_fqdn" {
+  value = azurerm_container_app.web.ingress[0].fqdn
+}
+
+output "cae_custom_domain_verification_id" {
+  value = azurerm_container_app_environment.main.custom_domain_verification_id
+}

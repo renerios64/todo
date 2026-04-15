@@ -29,6 +29,39 @@ resource "azurerm_resource_group" "secrets" {
 # Current Terraform runner identity — used to pass tenant_id to Key Vault.
 data "azurerm_client_config" "current" {}
 
+# Shared DNS zone managed independently in rg-dns.
+data "azurerm_dns_zone" "main" {
+  name                = "reneriosleon.com"
+  resource_group_name = "rg-dns"
+}
+
+# ── DNS Records ───────────────────────────────────────────────────────────────
+# CNAME points dev.todo → web Container App FQDN.
+# After a destroy+apply the CNAME auto-updates to the new CAE-generated FQDN.
+
+resource "azurerm_dns_cname_record" "web" {
+  name                = "dev.todo"
+  zone_name           = data.azurerm_dns_zone.main.name
+  resource_group_name = data.azurerm_dns_zone.main.resource_group_name
+  ttl                 = 300
+  record              = module.container_apps.web_fqdn
+  tags                = local.tags
+}
+
+# TXT record proves to Azure that we own the domain before it issues a TLS cert.
+resource "azurerm_dns_txt_record" "web_verify" {
+  name                = "asuid.dev.todo"
+  zone_name           = data.azurerm_dns_zone.main.name
+  resource_group_name = data.azurerm_dns_zone.main.resource_group_name
+  ttl                 = 300
+
+  record {
+    value = module.container_apps.cae_custom_domain_verification_id
+  }
+
+  tags = local.tags
+}
+
 # ── Modules ───────────────────────────────────────────────────────────────────
 
 module "networking" {
@@ -122,6 +155,8 @@ module "container_apps" {
   api_image = "${module.registry.login_server}/todo-api:latest"
   web_image = "${module.registry.login_server}/todo-web:v6"
   tags      = local.tags
+
+  custom_domain = "dev.todo.reneriosleon.com"
 }
 
 # ── Monitoring ────────────────────────────────────────────────────────────────

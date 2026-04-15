@@ -100,3 +100,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "custom_domain" {
+  description = "Custom domain to bind to the web Container App (e.g. todo.reneriosleon.com). Leave empty to skip."
+  type        = string
+  default     = ""
+}

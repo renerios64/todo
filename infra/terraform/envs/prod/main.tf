@@ -26,6 +26,36 @@ resource "azurerm_resource_group" "secrets" {
 
 data "azurerm_client_config" "current" {}
 
+# Shared DNS zone managed independently in rg-dns.
+data "azurerm_dns_zone" "main" {
+  name                = "reneriosleon.com"
+  resource_group_name = "rg-dns"
+}
+
+# ── DNS Records ───────────────────────────────────────────────────────────────
+
+resource "azurerm_dns_cname_record" "web" {
+  name                = "todo"
+  zone_name           = data.azurerm_dns_zone.main.name
+  resource_group_name = data.azurerm_dns_zone.main.resource_group_name
+  ttl                 = 300
+  record              = module.container_apps.web_fqdn
+  tags                = local.tags
+}
+
+resource "azurerm_dns_txt_record" "web_verify" {
+  name                = "asuid.todo"
+  zone_name           = data.azurerm_dns_zone.main.name
+  resource_group_name = data.azurerm_dns_zone.main.resource_group_name
+  ttl                 = 300
+
+  record {
+    value = module.container_apps.cae_custom_domain_verification_id
+  }
+
+  tags = local.tags
+}
+
 # ── Modules ───────────────────────────────────────────────────────────────────
 
 module "networking" {
@@ -138,6 +168,8 @@ module "container_apps" {
   # Keep prod logs longer
   log_analytics_retention_days = 90
   tags                         = local.tags
+
+  custom_domain = "todo.reneriosleon.com"
 }
 
 # ── Monitoring ────────────────────────────────────────────────────────────────
