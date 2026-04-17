@@ -167,7 +167,13 @@ resource "null_resource" "custom_domain_bind" {
   provisioner "local-exec" {
     command = <<-EOT
       set -e
-      echo "Binding custom domain ${var.custom_domain} to ${azurerm_container_app.web.name}..."
+      echo "Step 1: Adding hostname ${var.custom_domain} to ${azurerm_container_app.web.name}..."
+      az containerapp hostname add \
+        --resource-group ${azurerm_container_app.web.resource_group_name} \
+        --name ${azurerm_container_app.web.name} \
+        --hostname ${var.custom_domain}
+
+      echo "Step 2: Binding managed TLS cert for ${var.custom_domain}..."
       az containerapp hostname bind \
         --resource-group ${azurerm_container_app.web.resource_group_name} \
         --name ${azurerm_container_app.web.name} \
