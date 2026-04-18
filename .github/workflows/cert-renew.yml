@@ -1,0 +1,107 @@
+name: Renew Wildcard Dev Cert
+
+on:
+  schedule:
+    - cron: '0 8 1 * *'  # 1st of every month at 08:00 UTC
+  workflow_dispatch:       # allow manual trigger
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  KV: kv-todo-dev-a8ca4a
+  RESOURCE_GROUP: rg-todo-dev-eastus2
+  CAE: cae-todo-dev
+  CERT_NAME: wildcard-dev-todo
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.DEV_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install certbot + azure plugin
+        run: |
+          python -m pip install certbot certbot-dns-azure "azure-mgmt-dns<9.0.0"
+
+      - name: Write Azure DNS credentials
+        run: |
+          mkdir -p ~/.secrets/certbot
+          # Use printf to avoid heredoc indentation issues
+          printf 'dns_azure_environment = AzurePublicCloud\ndns_azure_use_cli_credentials = true\ndns_azure_zone1 = reneriosleon.com:/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/rg-dns/providers/Microsoft.Network/dnszones/reneriosleon.com\n' \
+            > ~/.secrets/certbot/azure.ini
+          chmod 600 ~/.secrets/certbot/azure.ini
+
+      - name: Renew certificate (certbot renews only if within 30 days of expiry)
+        id: renew
+        run: |
+          # Use /tmp dirs so certbot never needs sudo on the Actions runner
+          mkdir -p /tmp/letsencrypt
+          certbot certonly \
+            --config-dir /tmp/letsencrypt \
+            --work-dir /tmp/letsencrypt \
+            --logs-dir /tmp/letsencrypt \
+            --authenticator dns-azure \
+            --dns-azure-config ~/.secrets/certbot/azure.ini \
+            --dns-azure-propagation-seconds 60 \
+            -d "*.dev.todo.reneriosleon.com" \
+            --email renerios64@gmail.com \
+            --agree-tos \
+            --non-interactive \
+            --no-eff-email \
+            --keep-until-expiring 2>&1 | tee /tmp/certbot.log
+
+          if grep -q "Certificate not yet due for renewal" /tmp/certbot.log; then
+            echo "renewed=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ Certificate not yet due for renewal — skipping KV update"
+          else
+            echo "renewed=true" >> $GITHUB_OUTPUT
+            echo "✅ Certificate renewed"
+          fi
+
+      - name: Export and store renewed cert in Key Vault
+        if: steps.renew.outputs.renewed == 'true'
+        run: |
+          CERT_DIR=/tmp/letsencrypt/live/dev.todo.reneriosleon.com
+          PFX_PASSWORD=$(openssl rand -base64 32)
+
+          openssl pkcs12 -export \
+            -in "$CERT_DIR/fullchain.pem" \
+            -inkey "$CERT_DIR/privkey.pem" \
+            -out /tmp/wildcard-dev.pfx \
+            -passout pass:"$PFX_PASSWORD"
+
+          # base64 -w0 is Linux (ubuntu-latest runner) — no -w flag needed on macOS but this runs on Ubuntu
+          PFX_B64=$(base64 -w0 /tmp/wildcard-dev.pfx)
+
+          az keyvault secret set --vault-name ${{ env.KV }} \
+            --name wildcard-dev-cert-pfx \
+            --value "$PFX_B64" --output none
+
+          az keyvault secret set --vault-name ${{ env.KV }} \
+            --name wildcard-dev-cert-password \
+            --value "$PFX_PASSWORD" --output none
+
+          echo "✅ Updated KV secrets"
+
+          az containerapp env certificate upload \
+            -g ${{ env.RESOURCE_GROUP }} \
+            -n ${{ env.CAE }} \
+            --certificate-file /tmp/wildcard-dev.pfx \
+            --password "$PFX_PASSWORD" \
+            --certificate-name ${{ env.CERT_NAME }} \
+            --output none
+
+          echo "✅ Certificate re-imported into dev CAE"
+          rm -f /tmp/wildcard-dev.pfx

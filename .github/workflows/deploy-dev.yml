@@ -1,0 +1,194 @@
+name: Deploy Dev (per-branch)
+
+on:
+  push:
+    branches-ignore:
+      - main
+      - test
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write  # for PR comment
+
+env:
+  ACR: acrtododeva8ca4a.azurecr.io
+  ACR_NAME: acrtododeva8ca4a
+  RESOURCE_GROUP: rg-todo-dev-eastus2
+  CAE: cae-todo-dev
+  KV: kv-todo-dev-a8ca4a
+  WILDCARD_CERT_ID: /subscriptions/a8ca4ab0-9527-48d8-8531-6cb6ca6242d1/resourceGroups/rg-todo-dev-eastus2/providers/Microsoft.App/managedEnvironments/cae-todo-dev/certificates/wildcard-dev-todo
+  DOMAIN_SUFFIX: dev.todo.reneriosleon.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute branch slug
+        id: slug
+        run: |
+          SLUG=$(echo "${{ github.ref_name }}" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed 's/[^a-z0-9]/-/g' \
+            | sed 's/-\+/-/g' \
+            | sed 's/^-//;s/-$//' \
+            | cut -c1-30 \
+            | sed 's/-$//')
+          echo "slug=$SLUG" >> $GITHUB_OUTPUT
+          echo "hostname=${SLUG}.${{ env.DOMAIN_SUFFIX }}" >> $GITHUB_OUTPUT
+          echo "api_app=ca-api-dev-${SLUG}" >> $GITHUB_OUTPUT
+          echo "web_app=ca-web-dev-${SLUG}" >> $GITHUB_OUTPUT
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.DEV_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set image tag
+        id: tag
+        run: echo "tag=${{ steps.slug.outputs.slug }}-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Build and push API image
+        run: |
+          az acr build \
+            --registry ${{ env.ACR_NAME }} \
+            --image todo-api:${{ steps.tag.outputs.tag }} \
+            --platform linux/amd64 \
+            --file src/api/Dockerfile \
+            src/api
+
+      - name: Build and push web image
+        run: |
+          az acr build \
+            --registry ${{ env.ACR_NAME }} \
+            --image todo-web:${{ steps.tag.outputs.tag }} \
+            --platform linux/amd64 \
+            --file src/web/Dockerfile \
+            src/web
+
+      - name: Read secrets from Key Vault
+        id: kv
+        run: |
+          ACR_PASS=$(az keyvault secret show --vault-name ${{ env.KV }} \
+            --name acr-admin-password --query value -o tsv)
+          DB_CONN=$(az keyvault secret show --vault-name ${{ env.KV }} \
+            --name db-connection-string --query value -o tsv)
+          SLUG="${{ steps.slug.outputs.slug }}"
+          # Replace database name with per-branch database
+          BRANCH_DB_CONN=$(echo "$DB_CONN" | sed "s/Database=[^;]*/Database=todo_${SLUG}/")
+          echo "::add-mask::$ACR_PASS"
+          echo "::add-mask::$DB_CONN"
+          echo "::add-mask::$BRANCH_DB_CONN"
+          echo "acr_pass=$ACR_PASS" >> $GITHUB_OUTPUT
+          echo "db_conn=$BRANCH_DB_CONN" >> $GITHUB_OUTPUT
+
+      - name: Deploy API container app
+        id: api
+        run: |
+          SLUG="${{ steps.slug.outputs.slug }}"
+          APP="${{ steps.slug.outputs.api_app }}"
+          RG="${{ env.RESOURCE_GROUP }}"
+
+          if az containerapp show --name "$APP" --resource-group "$RG" &>/dev/null; then
+            az containerapp update \
+              --name "$APP" \
+              --resource-group "$RG" \
+              --image ${{ env.ACR }}/todo-api:${{ steps.tag.outputs.tag }}
+          else
+            az containerapp create \
+              --name "$APP" \
+              --resource-group "$RG" \
+              --environment ${{ env.CAE }} \
+              --image ${{ env.ACR }}/todo-api:${{ steps.tag.outputs.tag }} \
+              --registry-server ${{ env.ACR }} \
+              --registry-username ${{ env.ACR_NAME }} \
+              --registry-password "${{ steps.kv.outputs.acr_pass }}" \
+              --ingress external \
+              --target-port 8080 \
+              --min-replicas 0 \
+              --max-replicas 1 \
+              --env-vars "ConnectionStrings__DefaultConnection=${{ steps.kv.outputs.db_conn }}" \
+                         "ASPNETCORE_ENVIRONMENT=Development" \
+                         "ASPNETCORE_HTTP_PORTS=8080"
+          fi
+
+          API_FQDN=$(az containerapp show --name "$APP" --resource-group "$RG" \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          echo "fqdn=https://${API_FQDN}" >> $GITHUB_OUTPUT
+
+      - name: Deploy web container app
+        run: |
+          APP="${{ steps.slug.outputs.web_app }}"
+          RG="${{ env.RESOURCE_GROUP }}"
+
+          if az containerapp show --name "$APP" --resource-group "$RG" &>/dev/null; then
+            az containerapp update \
+              --name "$APP" \
+              --resource-group "$RG" \
+              --image ${{ env.ACR }}/todo-web:${{ steps.tag.outputs.tag }}
+          else
+            az containerapp create \
+              --name "$APP" \
+              --resource-group "$RG" \
+              --environment ${{ env.CAE }} \
+              --image ${{ env.ACR }}/todo-web:${{ steps.tag.outputs.tag }} \
+              --registry-server ${{ env.ACR }} \
+              --registry-username ${{ env.ACR_NAME }} \
+              --registry-password "${{ steps.kv.outputs.acr_pass }}" \
+              --ingress external \
+              --target-port 80 \
+              --min-replicas 0 \
+              --max-replicas 1 \
+              --env-vars "API_URL=${{ steps.api.outputs.fqdn }}" \
+                         "NGINX_ENVSUBST_FILTER=API_URL"
+          fi
+
+      - name: Bind custom hostname with wildcard cert
+        run: |
+          APP="${{ steps.slug.outputs.web_app }}"
+          HOSTNAME="${{ steps.slug.outputs.hostname }}"
+          RG="${{ env.RESOURCE_GROUP }}"
+
+          # Add hostname (idempotent — fails silently if already bound)
+          az containerapp hostname add \
+            --name "$APP" \
+            --resource-group "$RG" \
+            --hostname "$HOSTNAME" || true
+
+          # Bind wildcard cert
+          az containerapp hostname bind \
+            --name "$APP" \
+            --resource-group "$RG" \
+            --hostname "$HOSTNAME" \
+            --certificate "${{ env.WILDCARD_CERT_ID }}" \
+            --validation-method CNAME
+
+      - name: Find open PR and post comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER=$(gh pr list \
+            --head "${{ github.ref_name }}" \
+            --state open \
+            --json number \
+            --jq '.[0].number' \
+            --repo ${{ github.repository }})
+
+          if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
+            gh pr comment "$PR_NUMBER" \
+              --repo ${{ github.repository }} \
+              --body "🚀 **Branch environment deployed**
+
+          | | |
+          |---|---|
+          | **URL** | https://${{ steps.slug.outputs.hostname }} |
+          | **Image tag** | \`${{ steps.tag.outputs.tag }}\` |
+          | **Commit** | \`${GITHUB_SHA::7}\` |
+
+          _Environment will be torn down when this PR is merged or closed._"
+          fi

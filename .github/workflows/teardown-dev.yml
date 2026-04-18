@@ -1,0 +1,112 @@
+name: Teardown Dev (per-branch)
+
+on:
+  delete:  # branch deleted
+  pull_request:
+    types:
+      - closed  # PR merged or closed
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: rg-todo-dev-eastus2
+  CAE: cae-todo-dev
+  KV: kv-todo-dev-a8ca4a
+
+jobs:
+  teardown:
+    # Skip if this is a push to main/test (those don't have branch envs)
+    if: |
+      (github.event_name == 'delete' && github.event.ref_type == 'branch' &&
+       github.event.ref != 'main' && github.event.ref != 'test') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.base.ref != '' &&
+       github.head_ref != 'main' && github.head_ref != 'test')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compute branch slug
+        id: slug
+        run: |
+          # On delete event, branch name is in github.event.ref
+          # On pull_request closed, branch name is in github.head_ref
+          BRANCH="${{ github.event.ref || github.head_ref }}"
+          SLUG=$(echo "$BRANCH" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed 's/[^a-z0-9]/-/g' \
+            | sed 's/-\+/-/g' \
+            | sed 's/^-//;s/-$//' \
+            | cut -c1-30 \
+            | sed 's/-$//')
+          echo "slug=$SLUG" >> $GITHUB_OUTPUT
+          echo "api_app=ca-api-dev-${SLUG}" >> $GITHUB_OUTPUT
+          echo "web_app=ca-web-dev-${SLUG}" >> $GITHUB_OUTPUT
+          echo "db_name=todo_${SLUG}" >> $GITHUB_OUTPUT
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.DEV_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Delete API container app
+        run: |
+          APP="${{ steps.slug.outputs.api_app }}"
+          if az containerapp show --name "$APP" --resource-group "${{ env.RESOURCE_GROUP }}" &>/dev/null; then
+            az containerapp delete \
+              --name "$APP" \
+              --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --yes
+            echo "✅ Deleted $APP"
+          else
+            echo "ℹ️ $APP not found, skipping"
+          fi
+
+      - name: Delete web container app
+        run: |
+          APP="${{ steps.slug.outputs.web_app }}"
+          if az containerapp show --name "$APP" --resource-group "${{ env.RESOURCE_GROUP }}" &>/dev/null; then
+            az containerapp delete \
+              --name "$APP" \
+              --resource-group "${{ env.RESOURCE_GROUP }}" \
+              --yes
+            echo "✅ Deleted $APP"
+          else
+            echo "ℹ️ $APP not found, skipping"
+          fi
+
+      - name: Drop branch database
+        run: |
+          DB_CONN=$(az keyvault secret show --vault-name ${{ env.KV }} \
+            --name db-connection-string --query value -o tsv)
+          DB_NAME="${{ steps.slug.outputs.db_name }}"
+
+          # Run a one-shot Container Apps Job using the postgres image to drop the DB
+          # Uses the admin connection string (with default 'todo' database) to connect
+          ADMIN_CONN=$(echo "$DB_CONN" | sed "s/Database=[^;]*/Database=postgres/")
+          
+          JOB_NAME="drop-db-${{ steps.slug.outputs.slug }}"
+          
+          az containerapp job create \
+            --name "$JOB_NAME" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --environment "${{ env.CAE }}" \
+            --trigger-type Manual \
+            --replica-timeout 60 \
+            --image "postgres:16-alpine" \
+            --env-vars "PGCONN=$ADMIN_CONN" "DB_NAME=$DB_NAME" \
+            --command "/bin/sh" \
+            --args "-c" "psql \"\$PGCONN\" -c \"DROP DATABASE IF EXISTS \\\"${DB_NAME}\\\"\"" \
+            2>/dev/null || true
+
+          az containerapp job start \
+            --name "$JOB_NAME" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" && echo "✅ Drop DB job started"
+
+          # Wait up to 60s for completion then clean up the job definition
+          sleep 30
+          az containerapp job delete \
+            --name "$JOB_NAME" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --yes 2>/dev/null || true

@@ -1,0 +1,69 @@
+name: Deploy to Prod
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ACR: acrtodoproda8ca4a.azurecr.io
+  API_APP: ca-api-todo-prod
+  WEB_APP: ca-web-todo-prod
+  RESOURCE_GROUP: rg-todo-prod-eastus2
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production  # requires manual approval in GitHub
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.PROD_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set image tag
+        id: tag
+        run: echo "tag=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Build and push API image
+        run: |
+          az acr build \
+            --registry acrtodoproda8ca4a \
+            --image todo-api:${{ steps.tag.outputs.tag }} \
+            --image todo-api:latest \
+            --platform linux/amd64 \
+            --file src/api/Dockerfile \
+            src/api
+
+      - name: Build and push web image
+        run: |
+          az acr build \
+            --registry acrtodoproda8ca4a \
+            --image todo-web:${{ steps.tag.outputs.tag }} \
+            --image todo-web:latest \
+            --platform linux/amd64 \
+            --file src/web/Dockerfile \
+            src/web
+
+      - name: Update API container app
+        run: |
+          az containerapp update \
+            --name ${{ env.API_APP }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR }}/todo-api:${{ steps.tag.outputs.tag }}
+
+      - name: Update web container app
+        run: |
+          az containerapp update \
+            --name ${{ env.WEB_APP }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR }}/todo-web:${{ steps.tag.outputs.tag }}
