@@ -36,7 +36,7 @@ jobs:
             | sed 's/[^a-z0-9]/-/g' \
             | sed 's/-\+/-/g' \
             | sed 's/^-//;s/-$//' \
-            | cut -c1-30 \
+            | cut -c1-20 \
             | sed 's/-$//')
           echo "slug=$SLUG" >> $GITHUB_OUTPUT
           echo "hostname=${SLUG}.${{ env.DOMAIN_SUFFIX }}" >> $GITHUB_OUTPUT
