@@ -149,6 +149,20 @@ jobs:
                          "NGINX_ENVSUBST_FILTER=API_URL"
           fi
 
+      - name: Create DNS TXT record for hostname validation
+        run: |
+          SLUG="${{ steps.slug.outputs.slug }}"
+          VERIFICATION_ID=$(az containerapp env show \
+            --name ${{ env.CAE }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query properties.customDomainConfiguration.customDomainVerificationId \
+            -o tsv)
+          az network dns record-set txt add-record \
+            --resource-group rg-dns \
+            --zone-name reneriosleon.com \
+            --record-set-name "asuid.${SLUG}.dev.todo" \
+            --value "$VERIFICATION_ID" || true
+
       - name: Bind custom hostname with wildcard cert
         run: |
           APP="${{ steps.slug.outputs.web_app }}"
