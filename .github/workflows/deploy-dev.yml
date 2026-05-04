@@ -163,6 +163,14 @@ jobs:
             --record-set-name "asuid.${SLUG}.dev.todo" \
             --value "$VERIFICATION_ID" || true
 
+          # Explicit CNAME needed because the asuid TXT record creates an
+          # empty non-terminal that suppresses the wildcard *.dev.todo CNAME
+          az network dns record-set cname set-record \
+            --resource-group rg-dns \
+            --zone-name reneriosleon.com \
+            --record-set-name "${SLUG}.dev.todo" \
+            --cname "calmrock-ca361d2e.eastus2.azurecontainerapps.io" || true
+
       - name: Bind custom hostname with wildcard cert
         run: |
           APP="${{ steps.slug.outputs.web_app }}"

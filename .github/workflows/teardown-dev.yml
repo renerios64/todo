@@ -85,6 +85,12 @@ jobs:
             --record-set-name "asuid.${SLUG}.dev.todo" \
             --yes 2>/dev/null || true
 
+          az network dns record-set cname delete \
+            --resource-group rg-dns \
+            --zone-name reneriosleon.com \
+            --record-set-name "${SLUG}.dev.todo" \
+            --yes 2>/dev/null || true
+
       - name: Drop branch database
         run: |
           DB_CONN=$(az keyvault secret show --vault-name ${{ env.KV }} \
