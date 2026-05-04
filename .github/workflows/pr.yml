@@ -28,6 +28,10 @@ jobs:
       - name: Install web dependencies
         run: npm ci --prefix src/web
 
+      - name: Install system test dependencies
+        run: npm ci
+        working-directory: tests/system
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
         working-directory: tests/system
