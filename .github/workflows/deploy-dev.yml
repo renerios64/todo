@@ -23,6 +23,7 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: dev
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,7 +36,7 @@ jobs:
             | sed 's/[^a-z0-9]/-/g' \
             | sed 's/-\+/-/g' \
             | sed 's/^-//;s/-$//' \
-            | cut -c1-30 \
+            | cut -c1-20 \
             | sed 's/-$//')
           echo "slug=$SLUG" >> $GITHUB_OUTPUT
           echo "hostname=${SLUG}.${{ env.DOMAIN_SUFFIX }}" >> $GITHUB_OUTPUT
@@ -147,6 +148,28 @@ jobs:
               --env-vars "API_URL=${{ steps.api.outputs.fqdn }}" \
                          "NGINX_ENVSUBST_FILTER=API_URL"
           fi
+
+      - name: Create DNS TXT record for hostname validation
+        run: |
+          SLUG="${{ steps.slug.outputs.slug }}"
+          VERIFICATION_ID=$(az containerapp env show \
+            --name ${{ env.CAE }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query properties.customDomainConfiguration.customDomainVerificationId \
+            -o tsv)
+          az network dns record-set txt add-record \
+            --resource-group rg-dns \
+            --zone-name reneriosleon.com \
+            --record-set-name "asuid.${SLUG}.dev.todo" \
+            --value "$VERIFICATION_ID" || true
+
+          # Explicit CNAME needed because the asuid TXT record creates an
+          # empty non-terminal that suppresses the wildcard *.dev.todo CNAME
+          az network dns record-set cname set-record \
+            --resource-group rg-dns \
+            --zone-name reneriosleon.com \
+            --record-set-name "${SLUG}.dev.todo" \
+            --cname "calmrock-ca361d2e.eastus2.azurecontainerapps.io" || true
 
       - name: Bind custom hostname with wildcard cert
         run: |

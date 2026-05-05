@@ -37,60 +37,82 @@ export function NewRequestPage() {
     mutation.mutate(form);
   }
 
-  const fieldStyle = {
-    display: 'block',
-    width: '100%',
-    padding: '6px 10px',
-    borderRadius: 4,
-    border: '1px solid #ced4da',
-    marginBottom: 12,
-    boxSizing: 'border-box' as const,
-  };
-
   return (
-    <div style={{ maxWidth: 560 }}>
-      <Link to="/">← Back to list</Link>
-      <h1 style={{ marginTop: 12 }}>New Service Request</h1>
+    <div className="page" style={{ maxWidth: 640, margin: '0 auto' }}>
+      <Link to="/" className="back-link">← Back to list</Link>
+      <h1 className="page-title" style={{ marginBottom: 24 }}>New Service Request</h1>
 
-      <form onSubmit={handleSubmit}>
-        <label htmlFor="title">Title</label>
-        <input id="title" name="title" value={form.title} onChange={handleChange} required style={fieldStyle} />
+      <div className="form-card">
+        <form onSubmit={handleSubmit}>
+          <div className="form-field">
+            <label htmlFor="title">Title</label>
+            <input
+              id="title"
+              name="title"
+              value={form.title}
+              onChange={handleChange}
+              required
+              placeholder="Brief summary of the request"
+            />
+          </div>
 
-        <label htmlFor="description">Description</label>
-        <textarea
-          id="description"
-          name="description"
-          value={form.description}
-          onChange={handleChange}
-          required
-          rows={4}
-          style={fieldStyle}
-        />
+          <div className="form-field">
+            <label htmlFor="description">Description</label>
+            <textarea
+              id="description"
+              name="description"
+              value={form.description}
+              onChange={handleChange}
+              required
+              rows={4}
+              placeholder="Describe the issue or request in detail…"
+            />
+          </div>
 
-        <label htmlFor="requestorEmail">Requestor Email</label>
-        <input
-          id="requestorEmail"
-          name="requestorEmail"
-          type="email"
-          value={form.requestorEmail}
-          onChange={handleChange}
-          required
-          style={fieldStyle}
-        />
+          <div className="form-field">
+            <label htmlFor="requestorEmail">Requestor Email</label>
+            <input
+              id="requestorEmail"
+              name="requestorEmail"
+              type="email"
+              value={form.requestorEmail}
+              onChange={handleChange}
+              required
+              placeholder="you@example.com"
+            />
+          </div>
 
-        <label htmlFor="priority">Priority</label>
-        <select id="priority" name="priority" value={form.priority} onChange={handleChange} style={fieldStyle}>
-          {PRIORITIES.map((p) => (
-            <option key={p} value={p}>{p}</option>
-          ))}
-        </select>
+          <div className="form-field">
+            <label htmlFor="priority">Priority</label>
+            <select
+              id="priority"
+              name="priority"
+              value={form.priority}
+              onChange={handleChange}
+            >
+              {PRIORITIES.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </div>
 
-        {mutation.isError && <p style={{ color: 'red' }}>Failed to create request.</p>}
+          {mutation.isError && (
+            <p className="text-error" style={{ marginBottom: 16 }}>
+              Failed to create request. Please try again.
+            </p>
+          )}
 
-        <button type="submit" disabled={mutation.isPending}>
-          {mutation.isPending ? 'Submitting…' : 'Submit Request'}
-        </button>
-      </form>
+          <div className="form-actions">
+            <button
+              type="submit"
+              className="btn btn-primary btn-lg"
+              disabled={mutation.isPending}
+            >
+              {mutation.isPending ? 'Submitting…' : 'Submit Request'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
